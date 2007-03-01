@@ -1,0 +1,209 @@
+#!/usr/bin/python
+
+import os
+import sys
+import string
+import glob
+from subprocess import Popen, PIPE
+from svnshelve.patches import parse_patches
+from svnshelve.hunk_selector import HunkSelector
+from svnshelve.diffstat import DiffStat
+
+class QuitException(Exception):
+    pass
+
+class Shelf(object):
+    def __init__(self, location):
+        self.location = location
+
+    def shelf_suffix(self, index):
+        if index == 0:
+            return ""
+        else:
+            return "-%d" % index
+
+    def __iter__(self):
+        stem = os.path.join(self.location, '.svn-shelf')
+        for i in range(0, 16):
+            end = i and self.shelf_suffix(i) or ""
+            name = stem + end
+            if os.path.exists(name):
+                yield (i, name)
+
+    def next_shelf(self):
+        def name_sequence():
+            i = 0
+            while True:
+                yield i, self.shelf_suffix(i)
+                i = i + 1
+
+        stem = os.path.join(self.location, '.svn-shelf')
+        for i, end in name_sequence():
+            name = stem + end
+            if not os.path.exists(name):
+                return i, name
+
+    def last_shelf(self):
+        stem = os.path.join(self.location, '.svn-shelf')
+        shelves = glob.glob(stem)
+        shelves.extend(glob.glob(stem + '-*'))
+        def shelf_index(name):
+            if name == stem:
+                return 0
+            return int(name[len(stem)+1:])
+        shelvenums = [shelf_index(f) for f in shelves]
+        shelvenums.sort()
+
+        if len(shelvenums) == 0:
+            return None
+        return stem + self.shelf_suffix(shelvenums[-1])
+
+    def get_shelf_message(self, shelf):
+        prefix = "# shelf: "
+        if not shelf.startswith(prefix):
+            return None
+        return shelf[len(prefix):shelf.index('\n')]
+
+    def unshelve(self, message=None, id=-1):
+        shelf = None
+        patch = None
+        if message is not None:
+            for sid, seek in self:
+                patch = open(seek, 'r').read()
+                if self.get_shelf_message(patch) == message:
+                    shelf = seek
+                    break
+        elif id != -1:
+            for sid, seek in self:
+                if sid == id:
+                    shelf = seek
+                    break
+        else:
+            shelf = self.last_shelf()
+
+        if shelf is None:
+            raise Exception("No shelf found in '%s'" % self.location)
+
+        if not patch:
+            patch = open(shelf, 'r').read()
+
+        print >>sys.stderr, "Reapplying shelved patches",
+        message = self.get_shelf_message(patch)
+        if message is not None:
+            print >>sys.stderr, ' "%s"' % message
+        else:
+            print >>sys.stderr, ""
+        run_patch(self.location, (patch,))
+        os.remove(shelf)
+
+        diff_stat = DiffStat(self.get_patches(None, None))
+        print 'Diff status is now:\n', diff_stat
+
+        return 1
+
+    def get_patches(self, revision, file_list):
+        args = ['svn', 'diff']
+        if file_list:
+            args.extend([os.path.join(self.location, f) for f in file_list])
+        else:
+            args.append(self.location)
+        process = Popen(args, stdout=PIPE, stderr=PIPE)
+        out, err = process.communicate()
+        process.stdout.close()
+        process.stderr.close()
+        return out.splitlines(True)
+
+    def shelve(self, all_hunks=False, message=None, revision=None,
+             file_list=None):
+        patches = parse_patches(self.get_patches(revision, file_list))
+
+        if not all_hunks:
+            try:
+                patches = HunkSelector(patches).select()
+            except QuitException:
+                return False
+
+        if len(patches) == 0:
+            print >>sys.stderr, 'Nothing to shelve'
+            return 0
+
+        sid, shelf = self.next_shelf()
+        print >>sys.stderr, "Saving shelved patches to", shelf, "shelf ID", sid
+        shelf = open(shelf, 'a')
+        if message is not None:
+            assert '\n' not in message
+            shelf.write("# shelf: %s\n" % message)
+        for patch in patches:
+            shelf.write(str(patch))
+
+        shelf.flush()
+        os.fsync(shelf.fileno())
+        shelf.close()
+
+        print >>sys.stderr, "Reverting shelved patches"
+        run_patch(self.location, patches, reverse=True)
+
+        diff_stat = DiffStat(self.get_patches(None, None))
+        print 'Diff status is now:\n', diff_stat
+
+        return 1
+
+    def status(self):
+        print 'Diff status is now:'
+        print DiffStat(self.get_patches(None, None))
+        print
+
+        for sid, shelf in self:
+            shelf = open(shelf).read()
+            msg = self.get_shelf_message(shelf) or ''
+            print 'Shelf %i: %s' % (sid, msg)
+            print DiffStat(shelf.splitlines(True))
+            print
+
+
+def run_patch(branch_base, patches, reverse=False):
+    args = ['patch', '-d', branch_base, '-s', '-p0', '-f']
+    if reverse:
+        args.append('-R')
+    process = Popen(args, stdin=PIPE)
+
+    for patch in patches:
+        process.stdin.write(str(patch))
+    process.stdin.close()
+    result = process.wait()
+    if result not in (0, 1):
+        raise Exception("Error applying patches")
+    return result
+
+if __name__ == '__main__':
+    from optparse import OptionParser
+    parser = OptionParser()
+    parser.add_option('-i', '--info', dest='info', action='store_true', help='')
+    parser.add_option('-s', '--shelve', dest='shelve', action='store_true', help='')
+    parser.add_option('-u', '--unshelve', dest='shelve', action='store_false', help='')
+    parser.add_option('-a', '--all', dest="all_hunks", action='store_true', help='')
+    parser.add_option('-m', '--message', dest='message', help='')
+
+    opts, args = parser.parse_args()
+
+    if opts.shelve is None and opts.info is None:
+        parser.error('One of --shelve or --unshelve or --info is required')
+    if not opts.shelve and opts.all_hunks:
+        parser.error('--all can only be used with --shelve')
+
+    shelf = Shelf('.')
+    if opts.info:
+        shelf.status()
+    elif opts.shelve:
+        shelf.shelve(all_hunks=opts.all_hunks, message=opts.message, file_list=args)
+    else:
+        if opts.message:
+            shelf.unshelve(message=opts.message)
+        elif args:
+            try:
+                id = int(args[0])
+            except:
+                raise Exception("Invalid shelf ID '%s'" % id)
+            shelf.unshelve(id=id)
+        else:
+            shelf.unshelve()
