@@ -2,6 +2,21 @@
 
 import sys
 
+try:
+    import pygments
+except ImportError:
+    def _print_patch(*parts):
+        print patch
+else:
+    from pygments.formatters import TerminalFormatter
+    from pygments import highlight
+    from pygments.lexers import get_lexer_by_name
+    diff_lexer = get_lexer_by_name('diff')
+    term_fmter = TerminalFormatter()
+    def _print_patch(*parts):
+        for p in parts:
+            highlight(p, diff_lexer, term_fmter, sys.stdout)
+
 class HunkSelector:
     class Option:
         def __init__(self, char, action, help, default=False):
@@ -52,7 +67,7 @@ class HunkSelector:
             while i < len(patch.hunks):
                 hunk = patch.hunks[i]
                 if lasti != i:
-                    print patch.get_header(), hunk
+                    _print_patch(patch.get_header(), hunk)
                     j += 1
                 lasti = i
 

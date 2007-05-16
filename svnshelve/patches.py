@@ -184,10 +184,13 @@ class Hunk:
             return "%i,%i" % (pos, range)
 
     def __str__(self):
-        lines = [self.get_header()]
+        return "".join(self.splitlines())
+
+    def splitlines(self):
+        lines = [self.get_header()[:-1]]
         for line in self.lines:
-            lines.append(str(line))
-        return "".join(lines)
+            lines.append(str(line)[:-1])
+        return lines
 
     def shift_to_mod(self, pos):
         if pos < self.orig_pos-1:
