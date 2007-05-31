@@ -184,7 +184,7 @@ class Hunk:
             return "%i,%i" % (pos, range)
 
     def __str__(self):
-        return '\n'.join(self.splitlines())
+        return '\n'.join(self.splitlines()) + '\n'
 
     def splitlines(self):
         lines = [self.get_header()[:-1]]
