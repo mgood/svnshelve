@@ -6,7 +6,7 @@ import string
 import glob
 from subprocess import Popen, PIPE
 from svnshelve.patches import parse_patches
-from svnshelve.hunk_selector import HunkSelector
+from svnshelve.hunk_selector import HunkSelector, print_patch
 from svnshelve.diffstat import DiffStat
 
 class QuitException(Exception):
@@ -64,7 +64,7 @@ class Shelf(object):
             return None
         return shelf[len(prefix):shelf.index('\n')]
 
-    def unshelve(self, message=None, id=-1):
+    def get_shelf(self, message=None, id=-1):
         shelf = None
         patch = None
         if message is not None:
@@ -80,13 +80,17 @@ class Shelf(object):
                     break
         else:
             shelf = self.last_shelf()
+            sid = 0
 
         if shelf is None:
             raise Exception("No shelf found in '%s'" % self.location)
 
         if not patch:
             patch = open(shelf, 'r').read()
+        return sid, shelf, patch
 
+    def unshelve(self, message=None, id=-1):
+        sid, shelf, patch = self.get_shelf(message, id)
         print >>sys.stderr, "Reapplying shelved patches",
         message = self.get_shelf_message(patch)
         if message is not None:
@@ -160,6 +164,13 @@ class Shelf(object):
             print DiffStat(shelf.splitlines(True))
             print
 
+    def display(self, message=None, id=-1):
+        sid, shelf, patch = self.get_shelf(message, id)
+        msg = self.get_shelf_message(patch) or ''
+        print 'Shelf %i: %s' % (sid, msg)
+        print print_patch(patch)
+        print
+
 
 def run_patch(branch_base, patches, reverse=False):
     args = ['patch', '-d', branch_base, '-s', '-p0', '-f']
@@ -181,13 +192,14 @@ if __name__ == '__main__':
     parser.add_option('-i', '--info', dest='info', action='store_true', help='')
     parser.add_option('-s', '--shelve', dest='shelve', action='store_true', help='')
     parser.add_option('-u', '--unshelve', dest='shelve', action='store_false', help='')
+    parser.add_option('-d', '--display', dest='display', action='store_true', help='')
     parser.add_option('-a', '--all', dest="all_hunks", action='store_true', help='')
     parser.add_option('-m', '--message', dest='message', help='')
 
     opts, args = parser.parse_args()
 
-    if opts.shelve is None and opts.info is None:
-        parser.error('One of --shelve or --unshelve or --info is required')
+    if opts.shelve is None and opts.info is None and opts.display is None:
+        parser.error('One of --shelve or --unshelve or --info or --display is required')
     if not opts.shelve and opts.all_hunks:
         parser.error('--all can only be used with --shelve')
 
@@ -197,13 +209,17 @@ if __name__ == '__main__':
     elif opts.shelve:
         shelf.shelve(all_hunks=opts.all_hunks, message=opts.message, file_list=args)
     else:
+        if opts.display:
+            op = shelf.display
+        else:
+            op = shelf.unshelve
         if opts.message:
-            shelf.unshelve(message=opts.message)
+            op(message=opts.message)
         elif args:
             try:
                 id = int(args[0])
             except:
                 raise Exception("Invalid shelf ID '%s'" % id)
-            shelf.unshelve(id=id)
+            op(id=id)
         else:
-            shelf.unshelve()
+            op()
