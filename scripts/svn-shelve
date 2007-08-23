@@ -16,6 +16,15 @@ class Shelf(object):
     def __init__(self, location):
         self.location = location
 
+    def location():
+        def fget(self):
+            return self._location
+        def fset(self, location):
+            self._location = location
+            self.stem = os.path.join(location, '.svn-shelf')
+        return property(fget, fset)
+    location = location()
+
     def shelf_suffix(self, index):
         if index == 0:
             return ""
@@ -23,10 +32,9 @@ class Shelf(object):
             return "-%d" % index
 
     def __iter__(self):
-        stem = os.path.join(self.location, '.svn-shelf')
         for i in range(0, 16):
             end = i and self.shelf_suffix(i) or ""
-            name = stem + end
+            name = self.stem + end
             if os.path.exists(name):
                 yield (i, name)
 
@@ -37,26 +45,25 @@ class Shelf(object):
                 yield i, self.shelf_suffix(i)
                 i = i + 1
 
-        stem = os.path.join(self.location, '.svn-shelf')
         for i, end in name_sequence():
-            name = stem + end
+            name = self.stem + end
             if not os.path.exists(name):
                 return i, name
 
+    def shelf_index(self, name):
+        if name == self.stem:
+            return 0
+        return int(name[len(self.stem)+1:])
+
     def last_shelf(self):
-        stem = os.path.join(self.location, '.svn-shelf')
-        shelves = glob.glob(stem)
-        shelves.extend(glob.glob(stem + '-*'))
-        def shelf_index(name):
-            if name == stem:
-                return 0
-            return int(name[len(stem)+1:])
-        shelvenums = [shelf_index(f) for f in shelves]
+        shelves = glob.glob(self.stem)
+        shelves.extend(glob.glob(self.stem + '-*'))
+        shelvenums = [self.shelf_index(f) for f in shelves]
         shelvenums.sort()
 
         if len(shelvenums) == 0:
             return None
-        return stem + self.shelf_suffix(shelvenums[-1])
+        return self.stem + self.shelf_suffix(shelvenums[-1])
 
     def get_shelf_message(self, shelf):
         prefix = "# shelf: "
@@ -80,17 +87,16 @@ class Shelf(object):
                     break
         else:
             shelf = self.last_shelf()
-            sid = 0
 
         if shelf is None:
             raise Exception("No shelf found in '%s'" % self.location)
 
         if not patch:
             patch = open(shelf, 'r').read()
-        return sid, shelf, patch
+        return shelf, patch
 
     def unshelve(self, message=None, id=-1):
-        sid, shelf, patch = self.get_shelf(message, id)
+        shelf, patch = self.get_shelf(message, id)
         print >>sys.stderr, "Reapplying shelved patches",
         message = self.get_shelf_message(patch)
         if message is not None:
@@ -165,7 +171,8 @@ class Shelf(object):
             print
 
     def display(self, message=None, id=-1):
-        sid, shelf, patch = self.get_shelf(message, id)
+        shelf, patch = self.get_shelf(message, id)
+        sid = self.shelf_index(shelf)
         msg = self.get_shelf_message(patch) or ''
         print 'Shelf %i: %s' % (sid, msg)
         print print_patch(patch)
