@@ -6,7 +6,8 @@ try:
     import pygments
 except ImportError:
     def print_patch(*parts):
-        print patch
+        for p in parts:
+            print p
 else:
     from pygments.formatters import TerminalFormatter
     from pygments import highlight
