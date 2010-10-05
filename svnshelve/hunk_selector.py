@@ -16,7 +16,7 @@ else:
     term_fmter = TerminalFormatter()
     def print_patch(*parts):
         for p in parts:
-            highlight(p, diff_lexer, term_fmter, sys.stdout)
+            highlight(str(p), diff_lexer, term_fmter, sys.stdout)
 
 class HunkSelector:
     class Option:
